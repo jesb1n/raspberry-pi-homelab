@@ -1,0 +1,107 @@
+---
+# Rootless Docker Installation Tasks
+
+- name: Set target user variable
+  set_fact:
+    target_user: "{{ docker_user | default(ssh_authorized_keys_user | default('pi')) }}"
+  when: docker_install_enable | default(true)
+
+- name: Install rootless Docker prerequisites
+  package:
+    name:
+      - uidmap
+      - dbus-user-session
+      - fuse-overlayfs
+      - slirp4netns
+    state: present
+  become: true
+  when: docker_install_enable | default(true)
+
+- name: Ensure target user exists
+  user:
+    name: "{{ target_user }}"
+    state: present
+    shell: /bin/bash
+  become: true
+  when: docker_install_enable | default(true)
+
+- name: Enable systemd lingering for target user
+  command: "loginctl enable-linger {{ target_user }}"
+  become: true
+  changed_when: false
+  when: docker_install_enable | default(true)
+
+- name: Check if Docker is already installed (rootless)
+  command: "docker --version"
+  become: true
+  become_user: "{{ target_user }}"
+  register: docker_check
+  changed_when: false
+  failed_when: false
+  when: docker_install_enable | default(true)
+
+- name: Download Rootless Docker installation script
+  get_url:
+    url: https://get.docker.com/rootless
+    dest: /tmp/get-docker-rootless.sh
+    mode: '0755'
+  when: 
+    - docker_install_enable | default(true)
+    - docker_check.rc != 0
+
+- name: Get target user info
+  getent:
+    database: passwd
+    key: "{{ target_user }}"
+  when: docker_install_enable | default(true)
+
+- name: Run Rootless Docker installation script
+  become: true
+  become_user: "{{ target_user }}"
+  command: sh /tmp/get-docker-rootless.sh
+  args:
+    creates: "{{ getent_passwd[target_user][4] }}/bin/docker"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ getent_passwd[target_user][1] }}"
+  when: 
+    - docker_install_enable | default(true)
+    - docker_check.rc != 0
+
+- name: Add Docker environment variables to .bashrc
+  lineinfile:
+    path: "{{ getent_passwd[target_user][4] }}/.bashrc"
+    line: "{{ item }}"
+    create: yes
+  loop:
+    - 'export PATH={{ getent_passwd[target_user][4] }}/bin:$PATH'
+    - 'export DOCKER_HOST=unix:///run/user/{{ getent_passwd[target_user][1] }}/docker.sock'
+  become: true
+  become_user: "{{ target_user }}"
+  when: docker_install_enable | default(true)
+
+- name: Ensure Docker service is started (User level)
+  become: true
+  become_user: "{{ target_user }}"
+  systemd:
+    name: docker
+    scope: user
+    state: started
+    enabled: yes
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ getent_passwd[target_user][1] }}"
+  when: 
+    - docker_install_enable | default(true)
+    - docker_check.rc != 0
+
+- name: Clean up installation script
+  file:
+    path: /tmp/get-docker-rootless.sh
+    state: absent
+  when: 
+    - docker_install_enable | default(true)
+    - docker_check.rc != 0
+
+- name: Display Docker Rootless status
+  debug:
+    msg: "Rootless Docker installed for user {{ target_user }}."
+  when: docker_install_enable | default(true)

@@ -1,0 +1,26 @@
+---
+- name: Raspberry Pi Configuration
+  hosts: rpi
+  become: yes
+  vars_files:
+    - config.yml
+  tasks:
+    # SSH Key Setup - First priority
+    - name: Include SSH key setup tasks
+      include_tasks: tasks/ssh-key-setup.yml
+      when: ssh_key_setup_enable | default(true)
+
+    # Initial System Setup
+    - name: Include initial setup tasks
+      include_tasks: tasks/initial-setup.yml
+      when: initial_setup_enable | default(true)
+
+    # Docker Installation
+    - name: Include Docker installation tasks
+      include_tasks: tasks/docker-install.yml
+      when: docker_install_enable | default(true)
+
+    # Tailscale Installation
+    - name: Include Tailscale installation tasks
+      include_tasks: tasks/tailscale-install.yml
+      when: tailscale_install_enable | default(true)

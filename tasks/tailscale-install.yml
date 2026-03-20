@@ -1,0 +1,195 @@
+---
+# Tailscale Installation Tasks
+- name: Check if Tailscale CLI is already installed
+  command: tailscale version
+  register: tailscale_cli_check
+  changed_when: false
+  failed_when: false
+  when: tailscale_install_enable | default(true)
+
+- name: Download and run Tailscale installation script
+  shell: curl -fsSL https://tailscale.com/install.sh | sh
+  args:
+    creates: /usr/bin/tailscale
+  when: 
+    - tailscale_install_enable | default(true)
+    - tailscale_cli_check.rc != 0
+
+- name: Check if Tailscale service file exists
+  stat:
+    path: "{{ item }}"
+  register: tailscale_service_files
+  failed_when: false
+  changed_when: false
+  loop:
+    - /etc/systemd/system/tailscale.service
+    - /lib/systemd/system/tailscale.service
+    - /usr/lib/systemd/system/tailscale.service
+  when: tailscale_install_enable | default(true)
+
+- name: Set fact if Tailscale service exists
+  set_fact:
+    tailscale_service_exists: "{{ tailscale_service_files.results | selectattr('stat.exists') | list | length > 0 }}"
+  when: tailscale_install_enable | default(true)
+
+- name: Reload systemd daemon (needed after Tailscale installation)
+  systemd:
+    daemon_reload: yes
+  when:
+    - tailscale_install_enable | default(true)
+    - tailscale_service_exists | default(false)
+
+- name: Ensure Tailscale service is running and enabled
+  systemd:
+    name: tailscale
+    state: started
+    enabled: yes
+  when: 
+    - tailscale_install_enable | default(true)
+    - tailscale_service_exists | default(false)
+
+- name: Check if Tailscale is already authenticated
+  command: tailscale status
+  register: tailscale_auth_check
+  changed_when: false
+  failed_when: false
+  when: 
+    - tailscale_install_enable | default(true)
+    - ts_key is defined
+
+- name: Check if /etc/sysctl.d exists
+  stat:
+    path: /etc/sysctl.d
+  register: sysctl_d_check
+  when: tailscale_install_enable | default(true)
+
+- name: Enable IPv4 forwarding
+  sysctl:
+    name: net.ipv4.ip_forward
+    value: '1'
+    sysctl_file: "{{ '/etc/sysctl.d/99-tailscale.conf' if sysctl_d_check.stat.exists else '/etc/sysctl.conf' }}"
+    state: present
+    reload: yes
+  when: tailscale_install_enable | default(true)
+
+- name: Enable IPv6 forwarding
+  sysctl:
+    name: net.ipv6.conf.all.forwarding
+    value: '1'
+    sysctl_file: "{{ '/etc/sysctl.d/99-tailscale.conf' if sysctl_d_check.stat.exists else '/etc/sysctl.conf' }}"
+    state: present
+    reload: yes
+  when: tailscale_install_enable | default(true)
+
+- name: Set Tailscale routes
+  set_fact:
+    tailscale_routes: "{{ tailscale_subnet_routes | default(['10.0.0.0/24', '192.168.1.0/24']) | join(',') }}"
+  when:
+    - tailscale_install_enable | default(true)
+    - ts_key is defined
+
+- name: Build Tailscale up command with features
+  set_fact:
+    tailscale_up_command: >
+      tailscale up
+      {% if tailscale_auth_check.rc != 0 %}
+      --authkey={{ ts_key }}
+      {% endif %}
+      --accept-routes
+      --accept-dns=false
+      {% if tailscale_subnet_routes is defined and tailscale_subnet_routes | length > 0 %}
+      --advertise-routes={{ tailscale_routes }}
+      {% endif %}
+      {% if tailscale_enable_exit_node | default(true) %}
+      --advertise-exit-node
+      {% endif %}
+      {% if tailscale_enable_ssh | default(true) %}
+      --ssh
+      {% endif %}
+  when:
+    - tailscale_install_enable | default(true)
+    - ts_key is defined
+
+- name: Connect/Update Tailscale network with features enabled
+  shell: "{{ tailscale_up_command }}"
+  register: tailscale_connect
+  when:
+    - tailscale_install_enable | default(true)
+    - ts_key is defined
+    - tailscale_up_command is defined
+
+- name: Install ethtool
+  package:
+    name: ethtool
+    state: present
+  when: tailscale_install_enable | default(true)
+
+- name: Detect primary network interface
+  shell: ip -o route get 8.8.8.8 | cut -f 5 -d " "
+  register: primary_interface
+  changed_when: false
+  when: tailscale_install_enable | default(true)
+
+- name: Enable UDP GRO forwarding and disable GRO list (immediate)
+  command: "ethtool -K {{ primary_interface.stdout }} rx-udp-gro-forwarding on rx-gro-list off"
+  ignore_errors: true
+  failed_when: false
+  when: 
+    - tailscale_install_enable | default(true)
+    - (tailscale_subnet_routes is defined and tailscale_subnet_routes | length > 0) or (tailscale_enable_exit_node | default(true))
+
+- name: Check for networkd-dispatcher directory
+  stat:
+    path: /etc/networkd-dispatcher/routable.d
+  register: networkd_dispatcher_dir
+  when: tailscale_install_enable | default(true)
+
+- name: Create networkd-dispatcher script for Tailscale optimization
+  copy:
+    dest: /etc/networkd-dispatcher/routable.d/50-tailscale
+    content: |
+      #!/bin/sh
+      ethtool -K $(ip -o route get 8.8.8.8 | cut -f 5 -d " ") rx-udp-gro-forwarding on rx-gro-list off
+    mode: '0755'
+  when: 
+    - tailscale_install_enable | default(true)
+    - networkd_dispatcher_dir.stat.exists
+    - (tailscale_subnet_routes is defined and tailscale_subnet_routes | length > 0) or (tailscale_enable_exit_node | default(true))
+
+- name: Verify Tailscale installation
+  command: tailscale version
+  register: tailscale_version
+  changed_when: false
+  when: tailscale_install_enable | default(true)
+
+- name: Display Tailscale version
+  debug:
+    msg: "Tailscale installed successfully: {{ tailscale_version.stdout }}"
+  when: tailscale_install_enable | default(true)
+
+- name: Display Tailscale status
+  command: tailscale status
+  register: tailscale_status
+  changed_when: false
+  failed_when: false
+  when: tailscale_install_enable | default(true)
+
+- name: Show Tailscale connection status
+  debug:
+    msg: |
+      Tailscale Status:
+      {{ tailscale_status.stdout | default('Not connected') }}
+      
+      {% if ts_key is defined %}
+      Connected to Tailscale network using auth key.
+      
+      Enabled Features:
+      - Subnet Router: {{ tailscale_subnet_routes | default(['10.0.0.0/24', '192.168.1.0/24']) | join(', ') }}
+      - Exit Node: {{ tailscale_enable_exit_node | default(true) | ternary('Yes', 'No') }}
+      - SSH: {{ tailscale_enable_ssh | default(true) | ternary('Yes', 'No') }}
+      
+      Note: You may need to approve the subnet routes and exit node in the Tailscale admin console.
+      {% else %}
+      No auth key provided. To connect manually, run: sudo tailscale up
+      {% endif %}
+  when: tailscale_install_enable | default(true)

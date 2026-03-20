@@ -1,0 +1,15 @@
+---
+# Example vault file for storing secrets
+# To use this file:
+# 1. Copy it: cp vault.example.yml vault.yml
+# 2. Encrypt it: ansible-vault encrypt vault.yml
+# 3. Edit it: ansible-vault edit vault.yml
+# 4. View it: ansible-vault view vault.yml
+
+# SSH Authentication
+ansible_ssh_pass: "your_ssh_password_here"
+ansible_become_pass: "your_sudo_password_here"
+
+# Other secrets can be added here
+# api_key: "your_api_key"
+# database_password: "your_db_password"

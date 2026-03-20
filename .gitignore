@@ -1,0 +1,30 @@
+# Ansible
+*.retry
+*.log
+
+# Config files (may contain sensitive data)
+config.yml
+inventory.ini
+
+# Ansible Vault files (encrypted secrets)
+group_vars/*/vault.yml
+host_vars/*/vault.yml
+**/vault.yml
+!**/vault.example.yml
+
+# Vault password files
+.vault_pass
+vault_pass.txt
+*.vault_pass
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+venv/
+env/
+ENV/

@@ -1,0 +1,8 @@
+---
+# Non-sensitive variables for the rpi group
+# Sensitive variables should go in vault.yml
+
+# Group-specific configuration
+# Example:
+# timezone: "America/New_York"
+# hostname: "raspberry-pi"

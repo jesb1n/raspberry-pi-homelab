@@ -1,0 +1,26 @@
+---
+# Initial Raspberry Pi Setup Tasks
+- name: Update apt cache
+  apt:
+    update_cache: yes
+    cache_valid_time: 3600
+  when: update_packages | default(true)
+
+- name: Upgrade all packages
+  apt:
+    upgrade: dist
+    autoremove: yes
+    autoclean: yes
+  when: update_packages | default(true)
+
+- name: Install essential packages
+  apt:
+    name: "{{ essential_packages }}"
+    state: present
+  when: install_essential_packages | default(true)
+
+- name: Ensure SSH is running
+  service:
+    name: ssh
+    state: started
+    enabled: yes
